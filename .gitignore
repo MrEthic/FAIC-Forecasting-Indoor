@@ -1,0 +1,16 @@
+dist/
+imports/*
+!imports/__init__.py
+.terraform
+cdktf.out
+cdktf.log
+*terraform.*.tfstate*
+
+.vscode
+venv
+outputs.json
+notebooks/
+*.zip
+*.pem
+*.Identifier
+*brewai*
