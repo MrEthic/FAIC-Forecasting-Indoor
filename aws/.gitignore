@@ -7,11 +7,10 @@ cdktf.log
 *terraform.*.tfstate*
 
 .vscode
-venv/
 outputs.json
 notebooks/
 *.zip
 *.pem
 *.Identifier
-*brewai*
+*githide*
 .env
