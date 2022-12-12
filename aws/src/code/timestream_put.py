@@ -13,6 +13,7 @@ REGION = os.environ.get("REGION", "ap-southeast-2")
 session = boto3.Session(region_name=REGION)
 timestream_client = session.client("timestream-write")
 lambda_client = session.client("lambda")
+s3 = session.client("s3")
 
 DATABASE_NAME = os.environ["DATABASE_NAME"]
 TABLE_NAME = os.environ["TABLE_NAME"]
@@ -24,6 +25,14 @@ def handler(event, context):
     try:
         LOGGER.info(f"Received event: {event}")
         payload = json.loads(event["body"])
+
+        today = datetime.strftime(datetime.now(), "%Y-%m-%d")
+
+        s3.put_object(
+            Body=json.dumps(payload),
+            Bucket="unsw-cse-bronze-lake",
+            Key=f'brewai/sensors/{today}/{payload["id"]}.json',
+        )
 
         if not all(key in payload.keys() for key in ATTRIBUTES):
             LOGGER.info(f"Missing parameters in requests")

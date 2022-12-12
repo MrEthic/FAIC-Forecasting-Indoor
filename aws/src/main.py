@@ -76,8 +76,12 @@ class MyStack(TerraformStack):
 
         put_arn = api.add_endpoint(
             http="PUT",
-            policies=[sensor_data_table_crud, policy.arn],
-            filename="/root/unsw/FAIC-Project-AWS-Template/src/code/archived/timestream_put.zip",
+            policies=[
+                sensor_data_table_crud,
+                policy.arn,
+                "arn:aws:iam::092201464628:policy/S3-CRUD-unsw-cse-datalake",
+            ],
+            filename="/root/unsw/BrewAI-Forecasting-Indoor/aws/src/code/archived/timestream_put.zip",
             environement={"DATABASE_NAME": ts.db_name, "TABLE_NAME": sensor_data_table},
             resource="data",
         )
@@ -85,7 +89,7 @@ class MyStack(TerraformStack):
         api.add_endpoint(
             http="GET",
             policies=[sensor_data_table_crud],
-            filename="/root/unsw/FAIC-Project-AWS-Template/src/code/archived/timestream_get.zip",
+            filename="/root/unsw/BrewAI-Forecasting-Indoor/aws/src/code/archived/timestream_get.zip",
             environement={"DATABASE_NAME": ts.db_name, "TABLE_NAME": sensor_data_table},
             timeout=20,
             resource="data",
@@ -94,7 +98,7 @@ class MyStack(TerraformStack):
         api.add_endpoint(
             http="GET",
             policies=[sensor_data_table_crud],
-            filename="/root/unsw/FAIC-Project-AWS-Template/src/code/archived/sensors_get.zip",
+            filename="/root/unsw/BrewAI-Forecasting-Indoor/aws/src/code/archived/sensors_get.zip",
             environement={"DATABASE_NAME": ts.db_name, "TABLE_NAME": sensor_data_table},
             timeout=20,
             resource="sensor",
@@ -103,7 +107,7 @@ class MyStack(TerraformStack):
         api.add_endpoint(
             http="GET",
             policies=[predictions_data_table_crud],
-            filename="/root/unsw/FAIC-Project-AWS-Template/src/code/archived/timestream_get_pred.zip",
+            filename="/root/unsw/BrewAI-Forecasting-Indoor/aws/src/code/archived/timestream_get_pred.zip",
             environement={
                 "DATABASE_NAME": ts.db_name,
                 "TABLE_NAME": predictions_data_table,
@@ -119,7 +123,7 @@ class MyStack(TerraformStack):
             "fetcher",
             name="fetch-from-brewai",
             schedule_expression="rate(1 minute)",
-            filename="/root/unsw/FAIC-Project-AWS-Template/src/code/archived/brewai_fetch.zip",
+            filename="/root/unsw/BrewAI-Forecasting-Indoor/aws/src/code/archived/brewai_fetch.zip",
             policies=[],
             memory_size=512,
             timeout=20,
@@ -134,7 +138,7 @@ class MyStack(TerraformStack):
             self,
             "make-prediction",
             name="make-prediction",
-            filename="/root/unsw/FAIC-Project-AWS-Template/src/code/archived/make_prediction.zip",
+            filename="/root/unsw/BrewAI-Forecasting-Indoor/aws/src/code/archived/make_prediction.zip",
             policies=[sensor_data_table_crud, predictions_data_table_crud],
             invoke_principal="lambda.amazonaws.com",
             invoke_from_arn=put_arn,
