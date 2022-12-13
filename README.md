@@ -12,6 +12,27 @@
 2. Learn how different AWS services works and how they can interact with each others
 3. Explore Databricks
 
+# Index
+1. [Infrastructure](#infrastructure)
+    1. [Solution overview](#solution-overview)
+    2. [AWS Schema](#infrastrucure)
+2. [Database](#database)
+    1. [Data Model](#data-model)
+    2. [SQL Queries](#sql-queries)
+3. [API](#api)
+    1. [Schema](#api-schema)
+    2. [GET /sensorsdata](#get-sensorsdata)
+    3. [PUT /sensorsdata](#put-sensorsdata)
+    4. [GET /sensorsdata/sensors](#get-sensorsdatasensors)
+    5. [GET /predictions](#get-predictions)
+    6. [Usage](#usage)
+4. [Brew AI Data Fetcher](#brew-ai-data-fetcher)
+    1. [Schema](#fetcher-schema)
+    2. [BrewAI API](#brewai-api)
+5. [ETLs](#etls)
+    1. [Daily export](#daily-export)
+    2. [Last N-days export](#last-n-days-export)
+
 # Repo Organisation
 ```
 aws/ --> aws IAAS code
@@ -84,6 +105,70 @@ Both tables have the same data model as Timestream doesn't allow much flexibilit
 In the sensorsdata table, measure_name is one of: iaq, temperature, humidity, voc, pressure or co2.
 
 In the predictions table, measure_name is: `{measure_name}~{timedelta}`. For example `iaq~5` is the predicted iaq 5 minutes ago. Therefor, when inserted in the table, the predictions rows have timestamp in the future.
+
+## SQL Queries
+As Timestream is SQL based, data can be queried with SQL. Check the [example notebook](databricks/examples/timestream_sql.ipynb) for example using boto3.
+
+Example of query:
+```SQL
+SELECT 
+  time,
+  deviceId,
+  measure_value::double AS temperature
+FROM "database"."table"
+WHERE
+  measure_name='temperature'
+  AND time between ago(1h) and now()
+ORDER BY time DESC
+```
+
+To convert the key, value data model into a tabular format, use the MAX function with if statements:
+```SQL
+SELECT 
+  time,
+  MAX(if(deviceId = 'B84C4503F361D64A', measure_value::double)) AS "B84C4503F361D64A",
+  MAX(if(deviceId = '99DD33EFB7990A71', measure_value::double)) AS "99DD33EFB7990A71",
+  MAX(if(deviceId = '7BB92D02D696C5C5', measure_value::double)) AS "7BB92D02D696C5C5"
+FROM "database"."table"
+WHERE
+  measure_name = 'iaq'
+  AND time between ago(1h) and now()
+GROUP BY time
+ORDER BY time ASC
+```
+
+Timestream supports advance SQL synthax:
+```SQL
+WITH measures AS (
+  SELECT
+    time,
+    AVG(measure_value::double) as iaq
+  FROM $__database."sensors"
+  WHERE deviceId='${device}'
+  AND measure_name='iaq'
+  AND time between date_add('hour', -6, now()) and date_add('minute', 15, now())
+  GROUP BY time
+), predictions as (
+  SELECT 
+    time,
+    MAX(if(measure_name = 'iaq~5', measure_value::double)) AS iaq5,
+    MAX(if(measure_name = 'iaq~10', measure_value::double)) AS iaq10,
+    MAX(if(measure_name = 'iaq~15', measure_value::double)) AS iaq15
+  FROM $__database."predictions"
+  WHERE deviceId='${device}'
+  AND time between date_add('hour', -6, now()) and date_add('minute', 15, now())
+  GROUP BY time
+)
+SELECT
+  measures.time,
+  AVG(measures.iaq) as IAQ,
+  AVG(predictions.iaq5) as "IAQ 5MIN",
+  AVG(predictions.iaq10) as "IAQ 10MIN",
+  AVG(predictions.iaq15) as "IAQ 15MIN"
+FROM measures LEFT JOIN predictions on measures.time = predictions.time
+GROUP BY measures.time
+ORDER BY measures.time ASC
+```
 
 # API
 In order to make data available to other projects, we built an API. It is also used as an abstraction layer on top of the database. People should be able to build notebooks using our data without any knowledge on how our database works.
@@ -285,15 +370,43 @@ A API Key is needed, it has to be passed as a request header `{"x-api-key": API_
 # Brew AI Data Fetcher
 As we do not have sensors yet, we use an API provided by BrewAI to fetch their sensor data. This is done using a Lambda function scheduled to run every minutes by a Cloudwatch event.
 
+Data is stored in both the database and the bronze datalake. In the datalake, json object are stored following the key: `brewai/sensors/yyyy-mm-dd/{id}.json`.
+
 ## Fetcher Schema
 ```mermaid
     flowchart LR
-        event([Event Bridge])-- every minutes -->l[brewai-sensor-iaq-scheduled-fetch-from-brewai-dev]
+        event([Event Bridge])
+        l[brewai-sensor-iaq-scheduled-fetch-from-brewai-dev]
+        db[(Timestream)]
+        s3[(Bronze Datalake)]
+
+        event-- every minutes -->l
+        l-->db
+        l-->s3
 ```
 > [Lambda code](aws/src/code/brewai_fetch.py)
 
 ## BrewAI API
 Endpoint used to fetch the latest readings of all devices: `https://model.brewai.com/api/sensor_readings?latest=true`. We need to pass a token in the header: `{"Authorization": "Bearer {BREWAI_API_KEY}"}`.
+
+# ETLs
+Some ETLs exists to convert raw json data fetched from the API to csv files more suitable for python notebook. Those ETLs are made with spark.
+
+## Daily export
+Transform the json readings of the day into a csv file in the silver datalake.
+```mermaid
+    flowchart LR
+        a[Extract json files from bronze datalake]-->b[Converte datetime & extract readings]-->c[Save as csv in silver datalake]
+```
+CSV is stored under `brewai/sensors/yyyy-mm-dd/raw.csv`.
+
+## Last N-days export
+Transform the json readings of the last N days into a csv file in the silver datalake.
+```mermaid
+    flowchart LR
+        a[Extract json files from bronze datalake]-->b[Converte datetime & extract readings]-->c[Save as csv in silver datalake]
+```
+CSV is stored under `brewai/sensors/export/yyyymmdd.yyyymmdd/raw.csv` and `brewai/sensors/latest/N-days`.
 
 # Models
 Four models have been trained to predict the next 15 minutes of IAQ values. The training codes are on databricks in `/databricks/models/training`.
@@ -312,4 +425,14 @@ The models are trained every weeks (monday at 00:00 UTC+11) on the data of the l
         export-->mlp
 ```
 
-All models have the same signature: `(-1, 60) --> (-1, 15)`. They accept a 2D array of list of 60 iaq values and output arrays or 15 minutes predictions. The model have to handle any normalization/preprocessing itself.
+All models have the same signature: `(-1, 60) --> (-1, 15)`. They accept a 2D array of list of 60 iaq values and output arrays or 15 minutes predictions. The model have to handle any normalization/preprocessing themself.
+
+Trained models artifact are saved as MLFlow experiement. They can then be load and register later.
+
+## Simple LSTM
+## MLP
+## XGBoost
+## MA
+## [AUTOKERAS]
+
+# Model Selection
