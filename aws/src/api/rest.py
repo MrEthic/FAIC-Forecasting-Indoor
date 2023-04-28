@@ -114,12 +114,12 @@ class RESTApi(Construct):
             tags=self.tags,
         )
 
-        """ h = hashlib.sha1()
-        with open(put_file_path) as file:
+        h = hashlib.sha1()
+        with open(filename, "rb") as file:
             chunk = 0
             while chunk != b"":
                 chunk = file.read(1024)
-                h.update(chunk) """
+                h.update(chunk)
 
         environement.update({"REGION": "ap-southeast-2"})
         function = LambdaFunction(
@@ -127,8 +127,8 @@ class RESTApi(Construct):
             f"lambda-{suffix}",
             filename=filename,
             function_name=f"{self.tags['project']}-{suffix}-{self.tags['env']}",
-            source_code_hash="1",
-            # source_code_hash=h.hexdigest(),
+            # source_code_hash="1",
+            source_code_hash=h.hexdigest(),
             role=role.arn,
             handler=f"{filename.split('/')[-1].split('.')[0]}.handler",
             runtime="python3.9",

@@ -13,5 +13,4 @@ notebooks/
 *.zip
 *.pem
 *.Identifier
-*brewai*
 .env

@@ -26,12 +26,13 @@ def handler(event, context):
         LOGGER.info(f"Received event: {event}")
         payload = json.loads(event["body"])
 
-        today = datetime.strftime(datetime.now(), "%Y-%m-%d")
+        # today = datetime.strftime(datetime.now(), "%Y-%m-%d")
+        date = datetime.strptime(payload["ts"], "%a, %d %b %Y %H:%M:%S GMT")
 
         s3.put_object(
             Body=json.dumps(payload),
             Bucket="unsw-cse-bronze-lake",
-            Key=f'brewai/sensors/{today}/{payload["id"]}.json',
+            Key=f'brewai/sensors/{date.year}/{date.strftime("%m")}/{date.strftime("%d")}/{payload["id"]}.json',
         )
 
         if not all(key in payload.keys() for key in ATTRIBUTES):
@@ -44,8 +45,6 @@ def handler(event, context):
                     "Access-Control-Allow-Origin": "*",
                 },
             }
-
-        date = datetime.strptime(payload["ts"], "%a, %d %b %Y %H:%M:%S GMT")
 
         if date < datetime.now() - timedelta(days=1):
             return {

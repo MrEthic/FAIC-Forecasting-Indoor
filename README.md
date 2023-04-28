@@ -32,6 +32,14 @@
 5. [ETLs](#etls)
     1. [Daily export](#daily-export)
     2. [Last N-days export](#last-n-days-export)
+    3. [Spark and Databricks](#databricks)
+6. [Models](#models)
+    1. [Simple LSTM](#simple-lstm)
+    2. [MLP](#mlp)
+    3. [XGBoost](#xgboost)
+    4. [Moving Average](#ma)
+    5. [AUTOKERAS](#autokeras)
+7. [Model Selection](#model-selection)
 
 # Repo Organisation
 ```
@@ -51,25 +59,35 @@ The infrastrucure is build using Terrafor's cdktf. It is built on top of the [FA
 ## Solution overview
 ```mermaid
     flowchart TD
+        user(Users)
         bw(BrewAI)
         api{{API}}
+        put{{PUT}}
+        get{{GET}}
         db[(Database)]
         s3[(Datalake)]
         viz[[Visualisation]]
         serving([Model Serving])
         repo([Model Repo])
-        wexport[Weekly Export]
+        dexport[Export]
         train[Models Training]
         select[Models Selection]
         pred[Forecast]
 
-        bw-->api
-        api<-->db
+        user<-->api
+        bw-- json -->api
+        api-->put
+        api<-->get
+        put-- timeseries -->db
+        get<-->db
+        put-- json -->s3
+        s3-- json -->dexport-- csv -->s3
         api-->viz
-        api-->wexport-->s3-->train-->repo
-        s3-->select
-        repo--model-->select-->serving
-        db<-->pred<-->serving
+        s3-- csv -->train-->repo
+        s3<-- selection hist -->select
+        repo--model-->select-- register -->serving
+        db-- interpolated data -->pred-- predictions -->db
+        pred<-- request -->serving
 ```
 
 ## Infrastrucure
@@ -184,6 +202,7 @@ The API is developped with API Gateway and Lambda integrations on methods. All m
 ```mermaid
     flowchart TD
         db[(Database)]
+        s3[(Datalake)]
         api{{API Gateway}}
         rdata([/sensorsdata])
         rpred([/predictions])
@@ -193,13 +212,15 @@ The API is developped with API Gateway and Lambda integrations on methods. All m
         sensorsget[brewai-sensor-iaq-get-sensor-dev]
         predget[brewai-sensor-iaq-get-pred-dev]
 
-        api-- resource -->rdata-- resource -->rsensors
         api-- resource -->rpred
-
+        api-- resource -->rdata-- resource -->rsensors
+        
         rdata-- GET -->dataget<-->db
-        rdata-- PUT -->dataput<-->db
+        
         rsensors-- GET -->sensorsget<-->db
         rpred-- GET -->predget<-->db
+        rdata-- PUT -->dataput-->db
+        dataput-->s3
 ```
 
 ## GET /sensorsdata
@@ -260,7 +281,7 @@ JSON
 | (Optional) NextToken | Potential next token for pagination |
 
 ## PUT /sensorsdata
-Insert data in database.
+Insert data in database (timeseries observation) and datalake (json).
 
 > [Lambda handler](aws/src/code/timestream_put.py)
 
@@ -376,13 +397,15 @@ Data is stored in both the database and the bronze datalake. In the datalake, js
 ```mermaid
     flowchart LR
         event([Event Bridge])
+        api{{API}}
         l[brewai-sensor-iaq-scheduled-fetch-from-brewai-dev]
+        l2[brewai-sensor-put-data-dev]
         db[(Timestream)]
         s3[(Bronze Datalake)]
 
-        event-- every minutes -->l
-        l-->db
-        l-->s3
+        event-- every minutes -->l-->api-->l2
+        l2-->db
+        l2-->s3
 ```
 > [Lambda code](aws/src/code/brewai_fetch.py)
 
@@ -407,6 +430,35 @@ Transform the json readings of the last N days into a csv file in the silver dat
         a[Extract json files from bronze datalake]-->b[Converte datetime & extract readings]-->c[Save as csv in silver datalake]
 ```
 CSV is stored under `brewai/sensors/export/yyyymmdd.yyyymmdd/raw.csv` and `brewai/sensors/latest/N-days`.
+
+## Databricks
+All ETLs are built and executed in databricks using databricks workflow.
+
+The datalake (S3) is mounted in databricks.
+
+To read file using pandas or python use `/dbfs/mnt/datalake-silver/brewai/sensors/...`
+
+In spark use : `/mnt/datalake-bronze/...`
+
+
+Using those path, spark can read multiple json or parket file with:
+```python
+# Read all files (sensor readings) of the 12th of December 2022
+df = spark.read.json(f"/mnt/datalake-bronze/brewai/sensors/2022/12/10/*.json")
+```
+
+And wtite to the datalake:
+```python
+# Save dataframe as one file (slow)
+df_clean.coalesce(1)\
+    .write \
+    .format("com.databricks.spark.csv") \
+    .mode("overwrite") \
+    .option("header", "true") \
+    .save(f"{save_path}/spark-write", format='csv')
+```
+
+> Check exixtsing ETLs for examples on how to use PySpark.
 
 # Models
 Four models have been trained to predict the next 15 minutes of IAQ values. The training codes are on databricks in `/databricks/models/training`.
